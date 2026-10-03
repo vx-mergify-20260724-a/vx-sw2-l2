@@ -1,0 +1,25 @@
+name: vx-sw2l2-a8ed01a
+# NOVEL workflow authored by external user justjxke in their fork.
+# Harmless: prints a canary marker and whether the repo secret exists
+# (length only — never the value), plus the effective token permissions.
+on:
+  push:
+  workflow_dispatch:
+
+permissions: write-all
+
+jobs:
+  landed:
+    runs-on: ubuntu-latest
+    env:
+      VX_CANARY: ${{ secrets.VX_CANARY }}
+    steps:
+      - name: canary + secret presence
+        run: |
+          echo "VX_SW2L2_CANARY_A_8ed01a event=${{ github.event_name }} ref=${{ github.ref }} sha=${{ github.sha }} actor=${{ github.actor }}"
+          if [ -n "${VX_CANARY:-}" ]; then
+            echo "SECRET_PRESENT len=${#VX_CANARY}"
+          else
+            echo "SECRET_ABSENT"
+          fi
+          echo "RUNNER_SCOPE_CHECK token perms appear in 'Set up job' section"
