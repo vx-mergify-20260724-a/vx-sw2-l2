@@ -1,0 +1,19 @@
+name: vx-sw2l2-b4d0a64
+# Second novel workflow — same-repo branch variant (control for the
+# GITHUB_TOKEN /merges path and on:push recursion suppression).
+on:
+  push:
+  workflow_dispatch:
+
+permissions: write-all
+
+jobs:
+  landed:
+    runs-on: ubuntu-latest
+    env:
+      VX_CANARY: ${{ secrets.VX_CANARY }}
+    steps:
+      - name: canary + secret presence
+        run: |
+          echo "VX_SW2L2_CANARY_B_4d0a64 event=${{ github.event_name }} ref=${{ github.ref }} sha=${{ github.sha }} actor=${{ github.actor }}"
+          if [ -n "${VX_CANARY:-}" ]; then echo "SECRET_PRESENT len=${#VX_CANARY}"; else echo "SECRET_ABSENT"; fi
